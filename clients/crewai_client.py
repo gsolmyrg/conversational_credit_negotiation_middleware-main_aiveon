@@ -2,8 +2,38 @@
 import os
 import json
 from time import sleep
+from typing import Any
 
 import requests
+
+
+def _to_jsonable(obj: Any):
+    """
+    Converte objetos Pydantic/BaseModel/estruturas aninhadas em algo serializável em JSON.
+    - Pydantic v2: usa model_dump()
+    - Pydantic v1: usa dict()
+    - dict/list/tuple: processa recursivamente
+    - outros tipos: retorna como está (desde que json-serializable)
+    """
+    # Pydantic v2
+    if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+    # Pydantic v1
+    if hasattr(obj, "dict") and callable(getattr(obj, "dict")):
+        try:
+            return obj.dict()
+        except Exception:
+            pass
+
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(v) for v in obj]
+
+    return obj
 
 
 class CrewaiClient:
@@ -43,11 +73,14 @@ class CrewaiClient:
     # -----------------------
     # APIs
     # -----------------------
-    def kickoff(self, payload: dict) -> str:
+    def kickoff(self, payload: Any) -> str:
         """
         Dispara a execução do Flow. Retorna o ID para polling.
+        Aceita payload como dict ou objeto Pydantic; converte para JSON-serializable.
         """
-        response = requests.post(self.kickoff_url, headers=self.headers, json=payload)
+        json_payload = _to_jsonable(payload)
+
+        response = requests.post(self.kickoff_url, headers=self.headers, json=json_payload)
         response.raise_for_status()
         data = response.json()
 

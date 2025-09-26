@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+from typing import Any
 
 # IMPORTS ABSOLUTOS para funcionar com `python main.py`
-from clients.crewai_client import CrewaiClient
+from clients.crewai_client import CrewaiClient, _to_jsonable
 from clients.whatsapp_client import WhatsappClient
 from models import Message  # seu models.py tem Message(role, content)
 
@@ -12,7 +13,7 @@ class MessageSubmissionService:
         self._crewai_client = CrewaiClient()
         self._whatsapp_client = WhatsappClient()
 
-    def kickoff_interaction(self, body: dict) -> Message:
+    def kickoff_interaction(self, body: Any) -> Message:
         """
         Fluxo:
         - Dispara o kickoff no CrewAI (Flow)
@@ -21,9 +22,14 @@ class MessageSubmissionService:
         - Pega a última mensagem do 'history'
         - Envia via WhatsApp para a persona (se houver número)
         - Retorna Message(role, content) para o controller HTTP responder
+
+        Aceita 'body' como dict OU objeto Pydantic. Converte para JSON-serializable.
         """
+        # 0) Normaliza o body (aceita Pydantic v1/v2)
+        body_json = _to_jsonable(body)
+
         # 1) Dispara o Flow
-        kickoff_id = self._crewai_client.kickoff(body)
+        kickoff_id = self._crewai_client.kickoff(body_json)
 
         # 2) Polling até obter o resultado final
         result_raw = self._crewai_client.status(kickoff_id)
@@ -50,9 +56,21 @@ class MessageSubmissionService:
 
         assistant_message = Message(**last_msg)
 
-        # 5) Dispara WhatsApp (Evolution API) — usa o client existente
-        persona = body.get("persona") or {}
-        number = str(persona.get("cellphone", "")).strip()
+        # 5) Dispara WhatsApp (Evolution API)
+        persona = None
+        # tenta pegar do body original; se for Pydantic, já foi convertido para dict em body_json
+        if isinstance(body_json, dict):
+            persona = body_json.get("persona")
+            # também suportar envelope {"inputs": {...}}
+            if persona is None:
+                inputs = body_json.get("inputs")
+                if isinstance(inputs, dict):
+                    persona = inputs.get("persona")
+
+        number = ""
+        if isinstance(persona, dict):
+            number = str(persona.get("cellphone", "")).strip()
+
         if number:
             self._whatsapp_client.send_text(number=number, text=assistant_message.content)
 
