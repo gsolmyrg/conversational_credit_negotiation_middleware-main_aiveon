@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
-import os
 import json
-import uuid
-from uuid import uuid5, NAMESPACE_URL
 
-# IMPORTS ABSOLUTOS (sem ponto) para funcionar com `python main.py`
+# IMPORTS ABSOLUTOS para funcionar com `python main.py`
 from clients.crewai_client import CrewaiClient
 from clients.whatsapp_client import WhatsappClient
-from models import Message  # ajuste se tiver WhatsappRequestBody etc.
+from models import Message  # seu models.py tem Message(role, content)
 
 
 class MessageSubmissionService:
@@ -17,16 +14,18 @@ class MessageSubmissionService:
 
     def kickoff_interaction(self, body: dict) -> Message:
         """
-        Orquestra:
-        - Dispara o kickoff no CrewAI
+        Fluxo:
+        - Dispara o kickoff no CrewAI (Flow)
         - Faz polling no /status/{id}
-        - Extrai a última mensagem do histórico
-        - Retorna Message(role, content) para o controlador HTTP responder
+        - Garante que o resultado seja dict (não string)
+        - Pega a última mensagem do 'history'
+        - Envia via WhatsApp para a persona (se houver número)
+        - Retorna Message(role, content) para o controller HTTP responder
         """
         # 1) Dispara o Flow
         kickoff_id = self._crewai_client.kickoff(body)
 
-        # 2) Polling até obter o resultado
+        # 2) Polling até obter o resultado final
         result_raw = self._crewai_client.status(kickoff_id)
 
         # 3) Se vier string JSON, desserializa; se já vier dict, mantém
@@ -51,14 +50,10 @@ class MessageSubmissionService:
 
         assistant_message = Message(**last_msg)
 
+        # 5) Dispara WhatsApp (Evolution API) — usa o client existente
+        persona = body.get("persona") or {}
+        number = str(persona.get("cellphone", "")).strip()
+        if number:
+            self._whatsapp_client.send_text(number=number, text=assistant_message.content)
+
         return assistant_message
-
-
-# Exemplo de outro serviço (se usar webhook do WhatsApp), mantenha/ou remova conforme seu projeto.
-# from models import WhatsappRequestBody
-# class WhatsappWebhookService:
-#     def __init__(self):
-#         self._crewai_client = CrewaiClient()
-#         self._whatsapp_client = WhatsappClient()
-#     def handle_inbound(self, body: WhatsappRequestBody) -> None:
-#         pass
